@@ -5,6 +5,7 @@ Uses reasoning and acting in a loop with Claude LLM.
 
 import json
 import logging
+import xml.etree.ElementTree as ET
 from typing import Dict, Any, List, Optional
 from llm import LlmClient
 from tools import CodeRepositoryTools, get_available_tools
@@ -106,9 +107,11 @@ class ReactAgent:
     def _build_system_prompt(self) -> str:
         """Build the system prompt with tool descriptions."""
         tools_description = "\n\n".join([
-            f"Tool: {tool['name']}\n"
-            f"Description: {tool['description']}\n"
-            f"Parameters: {json.dumps(tool['parameters'], indent=2)}"
+            f"<tool>\n"
+            f"  <name>{tool['name']}</name>\n"
+            f"  <description>{tool['description']}</description>\n"
+            f"  <parameters>{json.dumps(tool['parameters'], indent=2)}</parameters>\n"
+            f"</tool>"
             for tool in get_available_tools()
         ])
         
@@ -117,8 +120,7 @@ You follow the ReAct pattern: Reasoning + Acting.
 
 For each step:
 1. THINK: Reason about what you need to do next
-2. ACT: Choose a tool to use and specify the parameters
-3. OBSERVE: You'll receive the result of the tool execution
+2. ACT: Choose a tool to use and specify the parameters in XML format
 
 Available Tools:
 {tools_description}
@@ -128,19 +130,27 @@ Instructions:
 - Think step by step about what needs to be done
 - Use the tools to read, search, and modify files as needed
 - When you've completed the task, call the 'task_complete' tool with a summary
-- Format your responses as:
+- Format your responses using XML tags:
 
-THOUGHT: [Your reasoning about what to do next]
-ACTION: [Tool name]
-PARAMETERS: [JSON object with parameters]
+<THOUGHT>[Your reasoning about what to do next]</THOUGHT>
+<ACTION>
+  <tool_name>[Tool name]</tool_name>
+  <parameters>
+    <param_name>[param_value]</param_name>
+  </parameters>
+</ACTION>
 
 Example:
-THOUGHT: I need to see what files are in the repository first.
-ACTION: list_files
-PARAMETERS: {{"directory": "."}}
+<THOUGHT>I need to see what files are in the repository first.</THOUGHT>
+<ACTION>
+  <tool_name>list_files</tool_name>
+  <parameters>
+    <directory>.</directory>
+  </parameters>
+</ACTION>
 
 After you use a tool, I will respond with:
-OBSERVATION: [Tool execution result]
+<OBSERVATION>[Tool execution result]</OBSERVATION>
 
 Then you continue with your next THOUGHT/ACTION cycle.
 """
@@ -166,6 +176,49 @@ Then you continue with your next THOUGHT/ACTION cycle.
         
         return response_text
     
+    def _parse_response(self, response: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse the LLM's XML response.
+
+        Args:
+            response: The XML response from the LLM.
+
+        Returns:
+            A dictionary containing the parsed data or None if parsing fails.
+        """
+        try:
+            # Wrap the response in a root element to handle fragmented XML
+            xml_response = f"<root>{response}</root>"
+            root = ET.fromstring(xml_response)
+
+            thought_element = root.find("THOUGHT")
+            thought = thought_element.text.strip() if thought_element is not None and thought_element.text else ""
+
+            action_element = root.find("ACTION")
+            tool_name_element = action_element.find("tool_name")
+            tool_name = tool_name_element.text.strip() if tool_name_element is not None and tool_name_element.text else ""
+
+            parameters = {}
+            params_element = action_element.find("parameters")
+            if params_element is not None:
+                for param in params_element:
+                    parameters[param.tag] = param.text.strip() if param.text else ""
+
+            if not tool_name:
+                raise ValueError("Tool name not found in response")
+
+            return {
+                "thought": thought,
+                "tool_name": tool_name,
+                "parameters": parameters,
+            }
+        except ET.ParseError as e:
+            logger.error(f"Invalid XML response: {e}")
+            return None
+        except ValueError as e:
+            logger.error(f"Error parsing response: {e}")
+            return None
+
     def _process_response(self, response: str) -> Optional[Dict[str, Any]]:
         """
         Parse the LLM response and execute the requested tool.
@@ -177,52 +230,14 @@ Then you continue with your next THOUGHT/ACTION cycle.
             Dictionary with tool execution results or None if no tool was called
         """
         try:
-            # Parse the response to extract ACTION and PARAMETERS
-            lines = response.strip().split('\n')
-            action_line = None
-            parameters_line = None
-            
-            for i, line in enumerate(lines):
-                if line.startswith('ACTION:'):
-                    action_line = line.replace('ACTION:', '').strip()
-                elif line.startswith('PARAMETERS:'):
-                    # Collect all lines that are part of the JSON parameters
-                    parameters_text = line.replace('PARAMETERS:', '').strip()
-                    # Look for multi-line JSON
-                    j = i + 1
-                    while j < len(lines) and not lines[j].startswith(('THOUGHT:', 'ACTION:', 'OBSERVATION:')):
-                        parameters_text += '\n' + lines[j]
-                        j += 1
-                    parameters_line = parameters_text
-            
-            if not action_line:
-                logger.warning("No ACTION found in response, waiting for next iteration")
+            # Parse the response to extract action and parameters
+            parsed_response = self._parse_response(response)
+            if not parsed_response:
                 return None
-            
-            tool_name = action_line
-            parameters = {}
-            
-            if parameters_line:
-                try:
-                    # Try to parse as JSON
-                    parameters = json.loads(parameters_line)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse parameters JSON: {e}")
-                    logger.error(f"Parameters text: {parameters_line}")
-                    
-                    # Try to extract JSON using regex as fallback
-                    import re
-                    json_match = re.search(r'\{.*\}', parameters_line, re.DOTALL)
-                    if json_match:
-                        try:
-                            parameters = json.loads(json_match.group())
-                            logger.info("Successfully extracted JSON using regex fallback")
-                        except json.JSONDecodeError:
-                            logger.warning("Regex fallback also failed, using empty parameters")
-                            parameters = {}
-                    else:
-                        parameters = {}
-            
+
+            tool_name = parsed_response["tool_name"]
+            parameters = parsed_response["parameters"]
+
             logger.info(f"\n--- Executing Tool ---")
             logger.info(f"Tool: {tool_name}")
             logger.info(f"Parameters: {json.dumps(parameters, indent=2)}")
@@ -234,7 +249,7 @@ Then you continue with your next THOUGHT/ACTION cycle.
             logger.info(f"--- End Tool Execution ---\n")
             
             # Add observation to conversation history
-            observation_text = f"OBSERVATION: {json.dumps(result, indent=2)}"
+            observation_text = f"<OBSERVATION>{json.dumps(result, indent=2)}</OBSERVATION>"
             self.conversation_history.append({
                 "role": "user",
                 "content": observation_text
