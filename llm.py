@@ -96,7 +96,7 @@ class GeminiLlmClient(LlmClient):
             raise ImportError("The 'google-generativeai' package is required to use the Gemini LLM. Please install it with 'pip install google-generativeai'.")
 
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        self.model = genai.GenerativeModel('gemini-pro-latest')
 
     def call_llm(self, system_prompt: str, conversation_history: List[Dict[str, Any]]) -> str:
         """
