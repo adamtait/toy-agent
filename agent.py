@@ -222,11 +222,24 @@ Then you continue with your next THOUGHT/ACTION cycle.
             
             if parameters_line:
                 try:
+                    # Try to parse as JSON
                     parameters = json.loads(parameters_line)
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse parameters JSON: {e}")
                     logger.error(f"Parameters text: {parameters_line}")
-                    parameters = {}
+                    
+                    # Try to extract JSON using regex as fallback
+                    import re
+                    json_match = re.search(r'\{.*\}', parameters_line, re.DOTALL)
+                    if json_match:
+                        try:
+                            parameters = json.loads(json_match.group())
+                            logger.info("Successfully extracted JSON using regex fallback")
+                        except json.JSONDecodeError:
+                            logger.warning("Regex fallback also failed, using empty parameters")
+                            parameters = {}
+                    else:
+                        parameters = {}
             
             logger.info(f"\n--- Executing Tool ---")
             logger.info(f"Tool: {tool_name}")

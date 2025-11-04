@@ -65,7 +65,9 @@ class CodeRepositoryTools:
         try:
             full_path = os.path.join(self.repo_path, filepath)
             # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            dir_path = os.path.dirname(full_path)
+            if dir_path:  # Only create directory if filepath includes a directory
+                os.makedirs(dir_path, exist_ok=True)
             
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -82,34 +84,78 @@ class CodeRepositoryTools:
             return {"success": False, "error": str(e), "filepath": filepath}
     
     def search_in_files(self, pattern: str, file_extension: str = None) -> Dict[str, Any]:
-        """Search for a pattern in files using grep."""
+        """Search for a pattern in files using grep (Unix) or Python fallback (Windows)."""
         try:
-            cmd = ["grep", "-r", "-n", "-i", pattern, self.repo_path]
+            # Try to use grep first (faster on Unix systems)
+            import platform
+            use_grep = platform.system() != 'Windows'
             
-            # Add file extension filter if specified
-            if file_extension:
-                cmd.extend(["--include", f"*.{file_extension}"])
+            if use_grep:
+                try:
+                    cmd = ["grep", "-r", "-n", "-i", pattern, self.repo_path]
+                    
+                    # Add file extension filter if specified
+                    if file_extension:
+                        cmd.extend(["--include", f"*.{file_extension}"])
+                    
+                    # Exclude common directories
+                    for exclude in ['.git', '__pycache__', 'node_modules', 'venv']:
+                        cmd.extend(["--exclude-dir", exclude])
+                    
+                    result_proc = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    matches = []
+                    if result_proc.stdout:
+                        for line in result_proc.stdout.strip().split('\n'):
+                            if line:
+                                matches.append(line)
+                    
+                    result = {
+                        "success": True,
+                        "pattern": pattern,
+                        "matches": matches,
+                        "count": len(matches)
+                    }
+                    logger.info(f"search_in_files: Found {len(matches)} matches for pattern '{pattern}'")
+                    return result
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    # Fall back to Python implementation
+                    use_grep = False
             
-            # Exclude common directories
-            for exclude in ['.git', '__pycache__', 'node_modules', 'venv']:
-                cmd.extend(["--exclude-dir", exclude])
-            
-            result_proc = subprocess.run(cmd, capture_output=True, text=True)
-            
-            matches = []
-            if result_proc.stdout:
-                for line in result_proc.stdout.strip().split('\n'):
-                    if line:
-                        matches.append(line)
-            
-            result = {
-                "success": True,
-                "pattern": pattern,
-                "matches": matches,
-                "count": len(matches)
-            }
-            logger.info(f"search_in_files: Found {len(matches)} matches for pattern '{pattern}'")
-            return result
+            if not use_grep:
+                # Python-based search implementation (cross-platform)
+                matches = []
+                pattern_lower = pattern.lower()
+                
+                for root, dirs, files in os.walk(self.repo_path):
+                    # Filter directories
+                    dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', 'node_modules', 'venv']]
+                    
+                    for filename in files:
+                        # Filter by extension if specified
+                        if file_extension and not filename.endswith(f'.{file_extension}'):
+                            continue
+                        
+                        filepath = os.path.join(root, filename)
+                        try:
+                            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                for line_num, line in enumerate(f, 1):
+                                    if pattern_lower in line.lower():
+                                        rel_path = os.path.relpath(filepath, self.repo_path)
+                                        matches.append(f"{rel_path}:{line_num}:{line.strip()}")
+                        except Exception:
+                            # Skip files that can't be read
+                            pass
+                
+                result = {
+                    "success": True,
+                    "pattern": pattern,
+                    "matches": matches,
+                    "count": len(matches)
+                }
+                logger.info(f"search_in_files: Found {len(matches)} matches for pattern '{pattern}' (Python fallback)")
+                return result
+                
         except Exception as e:
             logger.error(f"search_in_files error: {str(e)}")
             return {"success": False, "error": str(e), "pattern": pattern}

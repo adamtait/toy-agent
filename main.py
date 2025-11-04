@@ -21,7 +21,9 @@ def setup_logging(log_level: str = "INFO", log_file: str = None):
     """
     # Create logs directory if logging to file
     if log_file:
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        log_dir = os.path.dirname(log_file)
+        if log_dir:  # Only create directory if log_file includes a directory
+            os.makedirs(log_dir, exist_ok=True)
     
     # Configure logging format
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
