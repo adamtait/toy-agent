@@ -9,6 +9,7 @@ import logging
 import argparse
 from dotenv import load_dotenv
 from agent import ReactAgent
+from llm import ClaudeLlmClient, GeminiLlmClient
 
 
 def setup_logging(log_level: str = "INFO", log_file: str = None):
@@ -39,9 +40,10 @@ def setup_logging(log_level: str = "INFO", log_file: str = None):
         handlers=handlers
     )
     
-    # Also set up logging for the anthropic library
+    # Also set up logging for the anthropic and google libraries
     logging.getLogger("anthropic").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("google.generativeai").setLevel(logging.WARNING)
 
 
 def main():
@@ -51,14 +53,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with a simple task
-  python main.py --task "Create a hello.py file that prints 'Hello World'"
+  # Run with Claude
+  python main.py --task "Create a hello.py file"
+
+  # Run with Gemini
+  python main.py --task "Create a hello.py file" --llm-provider gemini
   
   # Run with custom repository path and logging
   python main.py --task "Add a function to utils.py" --repo /path/to/repo --log-level DEBUG
-  
-  # Save logs to a file
-  python main.py --task "Fix the bug in main.py" --log-file logs/agent.log
 """
     )
     
@@ -84,6 +86,14 @@ Examples:
     )
     
     parser.add_argument(
+        "--llm-provider",
+        type=str,
+        default="claude",
+        choices=["claude", "gemini"],
+        help="The LLM provider to use (default: claude)"
+    )
+
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -107,18 +117,27 @@ Examples:
     # Load environment variables
     load_dotenv()
     
-    # Get API key
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not found in environment variables")
-        logger.error("Please set it in a .env file or export it as an environment variable")
-        sys.exit(1)
+    # Get API key and initialize LLM client
+    llm_client = None
+    if args.llm_provider == "claude":
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            logger.error("ANTHROPIC_API_KEY not found for Claude provider")
+            sys.exit(1)
+        llm_client = ClaudeLlmClient(api_key)
+    elif args.llm_provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("GEMINI_API_KEY not found for Gemini provider")
+            sys.exit(1)
+        llm_client = GeminiLlmClient(api_key)
     
     logger.info("="*80)
     logger.info("React Agent for Software Development")
     logger.info("="*80)
     logger.info(f"Task: {args.task}")
     logger.info(f"Repository: {os.path.abspath(args.repo)}")
+    logger.info(f"LLM Provider: {args.llm_provider}")
     logger.info(f"Max iterations: {args.max_iterations}")
     logger.info(f"Log level: {args.log_level}")
     if args.log_file:
@@ -127,7 +146,7 @@ Examples:
     
     # Create and run the agent
     agent = ReactAgent(
-        api_key=api_key,
+        llm_client=llm_client,
         repo_path=args.repo,
         max_iterations=args.max_iterations
     )

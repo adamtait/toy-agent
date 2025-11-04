@@ -6,7 +6,7 @@ Uses reasoning and acting in a loop with Claude LLM.
 import json
 import logging
 from typing import Dict, Any, List, Optional
-from anthropic import Anthropic
+from llm import LlmClient
 from tools import CodeRepositoryTools, get_available_tools
 
 logger = logging.getLogger(__name__)
@@ -18,16 +18,16 @@ class ReactAgent:
     complete software development tasks.
     """
     
-    def __init__(self, api_key: str, repo_path: str = ".", max_iterations: int = 10):
+    def __init__(self, llm_client: LlmClient, repo_path: str = ".", max_iterations: int = 10):
         """
         Initialize the React agent.
         
         Args:
-            api_key: Anthropic API key
+            llm_client: An instance of a class that inherits from LlmClient
             repo_path: Path to the code repository
             max_iterations: Maximum number of reasoning-action cycles
         """
-        self.client = Anthropic(api_key=api_key)
+        self.llm_client = llm_client
         self.tools = CodeRepositoryTools(repo_path)
         self.max_iterations = max_iterations
         self.iteration_count = 0
@@ -146,7 +146,7 @@ Then you continue with your next THOUGHT/ACTION cycle.
     
     def _call_llm(self, system_prompt: str) -> str:
         """
-        Call the Claude LLM with the current conversation history.
+        Call the configured LLM with the current conversation history.
         
         Args:
             system_prompt: The system prompt with instructions
@@ -154,27 +154,7 @@ Then you continue with your next THOUGHT/ACTION cycle.
         Returns:
             The LLM's response text
         """
-        logger.info("\n--- Calling LLM ---")
-        logger.debug(f"System prompt length: {len(system_prompt)} chars")
-        logger.debug(f"Conversation history length: {len(self.conversation_history)} messages")
-        
-        # Log the last user message
-        if self.conversation_history:
-            last_message = self.conversation_history[-1]
-            logger.info(f"Last message ({last_message['role']}): {last_message['content'][:200]}...")
-        
-        response = self.client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=2000,
-            system=system_prompt,
-            messages=self.conversation_history
-        )
-        
-        response_text = response.content[0].text
-        
-        logger.info(f"\n--- LLM Response ---")
-        logger.info(response_text)
-        logger.info(f"--- End LLM Response ---\n")
+        response_text = self.llm_client.call_llm(system_prompt, self.conversation_history)
         
         # Add assistant's response to conversation history
         self.conversation_history.append({
