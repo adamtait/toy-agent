@@ -107,6 +107,13 @@ Examples:
         default=None,
         help="Optional file to write logs to"
     )
+
+    parser.add_argument(
+        "--mcp-server",
+        type=str,
+        default=None,
+        help="URL of the MCP server"
+    )
     
     args = parser.parse_args()
     
@@ -148,7 +155,8 @@ Examples:
     agent = ReactAgent(
         llm_client=llm_client,
         repo_path=args.repo,
-        max_iterations=args.max_iterations
+        max_iterations=args.max_iterations,
+        mcp_server_url=args.mcp_server
     )
     
     try:
