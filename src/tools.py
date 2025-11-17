@@ -1,5 +1,7 @@
 """
-Tools for the React agent to interact with code repositories.
+This module provides a set of tools for the React agent to interact with
+a code repository. These tools cover file system operations like listing,
+reading, and writing files, as well as searching within files.
 """
 
 import os
@@ -11,14 +13,40 @@ logger = logging.getLogger(__name__)
 
 
 class CodeRepositoryTools:
-    """CLI tools for searching and modifying code repositories."""
+    """
+    A collection of tools for searching and modifying code repositories.
+
+    This class encapsulates methods that the agent can call to perform actions
+    on the file system within a specified repository path. All methods return
+    a dictionary with a 'success' flag and other relevant information.
+
+    Attributes:
+        repo_path (str): The absolute path to the code repository.
+    """
     
     def __init__(self, repo_path: str = "."):
+        """
+        Initializes the CodeRepositoryTools.
+
+        Args:
+            repo_path (str): The file path to the code repository. Defaults to the
+                             current working directory.
+        """
         self.repo_path = os.path.abspath(repo_path)
         logger.info(f"Initialized CodeRepositoryTools with repo_path: {self.repo_path}")
     
     def list_files(self, directory: str = ".") -> Dict[str, Any]:
-        """List all files in a directory."""
+        """
+        Lists all files in a specified directory, recursively.
+
+        It skips common unnecessary directories like '.git', 'node_modules', etc.
+
+        Args:
+            directory (str): The directory to scan, relative to the repository root.
+
+        Returns:
+            A dictionary containing a list of file paths and their count.
+        """
         try:
             full_path = os.path.join(self.repo_path, directory)
             files = []
@@ -38,11 +66,19 @@ class CodeRepositoryTools:
             logger.info(f"list_files: Found {len(files)} files in {directory}")
             return result
         except Exception as e:
-            logger.error(f"list_files error: {str(e)}")
+            logger.error(f"list_files error: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e)}
     
     def read_file(self, filepath: str) -> Dict[str, Any]:
-        """Read the contents of a file."""
+        """
+        Reads the contents of a file.
+
+        Args:
+            filepath (str): The path to the file, relative to the repository root.
+
+        Returns:
+            A dictionary containing the file's content and line count.
+        """
         try:
             full_path = os.path.join(self.repo_path, filepath)
             with open(full_path, 'r', encoding='utf-8') as f:
@@ -57,16 +93,26 @@ class CodeRepositoryTools:
             logger.info(f"read_file: Read {len(content)} characters from {filepath}")
             return result
         except Exception as e:
-            logger.error(f"read_file error for {filepath}: {str(e)}")
+            logger.error(f"read_file error for {filepath}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "filepath": filepath}
     
     def write_file(self, filepath: str, content: str) -> Dict[str, Any]:
-        """Write content to a file."""
+        """
+        Writes content to a file, creating it if it doesn't exist.
+        If the file exists, its content will be overwritten.
+
+        Args:
+            filepath (str): The path to the file, relative to the repository root.
+            content (str): The content to write to the file.
+
+        Returns:
+            A dictionary indicating success and the number of bytes written.
+        """
         try:
             full_path = os.path.join(self.repo_path, filepath)
             # Create directory if it doesn't exist
             dir_path = os.path.dirname(full_path)
-            if dir_path:  # Only create directory if filepath includes a directory
+            if dir_path:
                 os.makedirs(dir_path, exist_ok=True)
             
             with open(full_path, 'w', encoding='utf-8') as f:
@@ -80,62 +126,53 @@ class CodeRepositoryTools:
             logger.info(f"write_file: Wrote {len(content)} characters to {filepath}")
             return result
         except Exception as e:
-            logger.error(f"write_file error for {filepath}: {str(e)}")
+            logger.error(f"write_file error for {filepath}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "filepath": filepath}
     
     def search_in_files(self, pattern: str, file_extension: str = None) -> Dict[str, Any]:
-        """Search for a pattern in files using grep (Unix) or Python fallback (Windows)."""
+        """
+        Searches for a pattern in files using 'grep' (on Unix-like systems) for
+        efficiency, with a Python-based fallback for cross-platform compatibility.
+
+        Args:
+            pattern (str): The search pattern.
+            file_extension (str, optional): An optional file extension to filter the search.
+
+        Returns:
+            A dictionary with a list of matching lines.
+        """
         try:
-            # Try to use grep first (faster on Unix systems)
             import platform
             use_grep = platform.system() != 'Windows'
             
             if use_grep:
                 try:
                     cmd = ["grep", "-r", "-n", "-i", pattern, self.repo_path]
-                    
-                    # Add file extension filter if specified
                     if file_extension:
                         cmd.extend(["--include", f"*.{file_extension}"])
-                    
-                    # Exclude common directories
                     for exclude in ['.git', '__pycache__', 'node_modules', 'venv']:
                         cmd.extend(["--exclude-dir", exclude])
                     
-                    result_proc = subprocess.run(cmd, capture_output=True, text=True)
+                    result_proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                    matches = [line for line in result_proc.stdout.strip().split('\n') if line]
                     
-                    matches = []
-                    if result_proc.stdout:
-                        for line in result_proc.stdout.strip().split('\n'):
-                            if line:
-                                matches.append(line)
-                    
-                    result = {
+                    return {
                         "success": True,
                         "pattern": pattern,
                         "matches": matches,
                         "count": len(matches)
                     }
-                    logger.info(f"search_in_files: Found {len(matches)} matches for pattern '{pattern}'")
-                    return result
                 except (subprocess.SubprocessError, FileNotFoundError):
-                    # Fall back to Python implementation
-                    use_grep = False
+                    use_grep = False # Fallback to Python search
             
             if not use_grep:
-                # Python-based search implementation (cross-platform)
                 matches = []
                 pattern_lower = pattern.lower()
-                
                 for root, dirs, files in os.walk(self.repo_path):
-                    # Filter directories
                     dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', 'node_modules', 'venv']]
-                    
                     for filename in files:
-                        # Filter by extension if specified
                         if file_extension and not filename.endswith(f'.{file_extension}'):
                             continue
-                        
                         filepath = os.path.join(root, filename)
                         try:
                             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -144,33 +181,34 @@ class CodeRepositoryTools:
                                         rel_path = os.path.relpath(filepath, self.repo_path)
                                         matches.append(f"{rel_path}:{line_num}:{line.strip()}")
                         except Exception:
-                            # Skip files that can't be read
-                            pass
-                
-                result = {
+                            continue
+                return {
                     "success": True,
                     "pattern": pattern,
                     "matches": matches,
                     "count": len(matches)
                 }
-                logger.info(f"search_in_files: Found {len(matches)} matches for pattern '{pattern}' (Python fallback)")
-                return result
-                
         except Exception as e:
-            logger.error(f"search_in_files error: {str(e)}")
+            logger.error(f"search_in_files error: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "pattern": pattern}
     
     def get_file_info(self, filepath: str) -> Dict[str, Any]:
-        """Get information about a file."""
+        """
+        Gets metadata about a file.
+
+        Args:
+            filepath (str): The path to the file, relative to the repository root.
+
+        Returns:
+            A dictionary with file metadata (size, existence, type).
+        """
         try:
             full_path = os.path.join(self.repo_path, filepath)
-            
             if not os.path.exists(full_path):
                 return {"success": False, "error": "File does not exist", "filepath": filepath}
             
             stat = os.stat(full_path)
-            
-            result = {
+            return {
                 "success": True,
                 "filepath": filepath,
                 "size": stat.st_size,
@@ -178,58 +216,64 @@ class CodeRepositoryTools:
                 "is_file": os.path.isfile(full_path),
                 "is_dir": os.path.isdir(full_path)
             }
-            logger.info(f"get_file_info: Retrieved info for {filepath}")
-            return result
         except Exception as e:
-            logger.error(f"get_file_info error for {filepath}: {str(e)}")
+            logger.error(f"get_file_info error for {filepath}: {str(e)}", exc_info=True)
             return {"success": False, "error": str(e), "filepath": filepath}
 
 
 def get_available_tools() -> List[Dict[str, Any]]:
-    """Get list of available tools with their descriptions for the LLM."""
+    """
+    Returns a list of available tools with their descriptions for the LLM.
+
+    This function provides the schema that the LLM uses to understand how to
+    call the available tools, including their names, descriptions, and parameters.
+
+    Returns:
+        A list of dictionaries, each describing a tool.
+    """
     return [
         {
             "name": "list_files",
-            "description": "List all files in a directory. Use '.' for the root of the repository.",
+            "description": "Recursively lists all files in a directory. Use '.' for the repository root.",
             "parameters": {
-                "directory": "string (optional, default='.')"
+                "directory": "string (optional, default='.') - The directory to list files from."
             }
         },
         {
             "name": "read_file",
-            "description": "Read the contents of a file. Provide the relative path from repository root.",
+            "description": "Reads the entire content of a specified file.",
             "parameters": {
-                "filepath": "string (required)"
+                "filepath": "string (required) - The relative path of the file from the repository root."
             }
         },
         {
             "name": "write_file",
-            "description": "Write content to a file. Creates the file if it doesn't exist.",
+            "description": "Writes content to a file, creating it if it doesn't exist or overwriting it if it does.",
             "parameters": {
-                "filepath": "string (required)",
-                "content": "string (required)"
+                "filepath": "string (required) - The relative path of the file to write to.",
+                "content": "string (required) - The new content for the file."
             }
         },
         {
             "name": "search_in_files",
-            "description": "Search for a pattern in files using grep. Returns matching lines with file paths and line numbers.",
+            "description": "Searches for a pattern in files and returns the matching lines.",
             "parameters": {
-                "pattern": "string (required)",
-                "file_extension": "string (optional, e.g., 'py', 'js')"
+                "pattern": "string (required) - The text pattern to search for.",
+                "file_extension": "string (optional) - The extension of files to search in (e.g., 'py', 'js')."
             }
         },
         {
             "name": "get_file_info",
-            "description": "Get information about a file (size, existence, type).",
+            "description": "Retrieves metadata about a file, such as its size and type.",
             "parameters": {
-                "filepath": "string (required)"
+                "filepath": "string (required) - The relative path of the file."
             }
         },
         {
             "name": "task_complete",
-            "description": "Call this when the task is complete. Provide a summary of what was accomplished.",
+            "description": "Call this tool when the assigned task is fully completed.",
             "parameters": {
-                "summary": "string (required)"
+                "summary": "string (required) - A brief summary of what was accomplished."
             }
         }
     ]

@@ -1,6 +1,9 @@
 """
 React Agent implementation for software development tasks.
-Uses reasoning and acting in a loop with Claude LLM.
+
+This module defines the ReactAgent class, which is responsible for orchestrating
+the interaction between an LLM, a set of tools, and a code repository to
+autonomously complete software development tasks.
 """
 
 import json
@@ -18,18 +21,33 @@ logger = logging.getLogger(__name__)
 
 class ReactAgent:
     """
-    A React (Reasoning + Acting) agent that uses LLM to autonomously
+    A ReAct (Reasoning + Acting) agent that uses an LLM to autonomously
     complete software development tasks.
+
+    The agent operates in a loop, first reasoning about the task (THINK),
+    then selecting a tool to execute (ACT). The result of the tool's execution
+    (OBSERVATION) is then fed back into the loop for the next cycle.
+
+    Attributes:
+        llm_client (LlmClient): The client for interacting with the LLM.
+        tools (CodeRepositoryTools): A set of tools for interacting with the file system.
+        max_iterations (int): The maximum number of THINK/ACT cycles.
+        iteration_count (int): The current iteration number.
+        conversation_history (list): A log of the conversation with the LLM.
+        is_complete (bool): A flag indicating if the task is complete.
+        mcp_tools_client (McpTools, optional): A client for fetching remote tools.
+        mcp_tools (list): A list of available remote tools.
     """
     
     def __init__(self, llm_client: LlmClient, repo_path: str = ".", max_iterations: int = 10, mcp_server_url: Optional[str] = None):
         """
-        Initialize the React agent.
-        
+        Initializes the ReactAgent.
+
         Args:
-            llm_client: An instance of a class that inherits from LlmClient
-            repo_path: Path to the code repository
-            max_iterations: Maximum number of reasoning-action cycles
+            llm_client (LlmClient): An instance of a class that inherits from LlmClient.
+            repo_path (str): The file path to the code repository.
+            max_iterations (int): The maximum number of reasoning-action cycles.
+            mcp_server_url (str, optional): The URL of an MCP server for remote tools.
         """
         self.llm_client = llm_client
         self.tools = CodeRepositoryTools(repo_path)
@@ -48,13 +66,20 @@ class ReactAgent:
 
     def run(self, task: str) -> Dict[str, Any]:
         """
-        Run the agent on a given task.
-        
+        Runs the agent on a given task.
+
+        This method orchestrates the main ReAct loop:
+        1. Initializes the conversation with the task.
+        2. In a loop, it calls the LLM to get the next action.
+        3. Processes the LLM's response and executes the chosen tool.
+        4. Feeds the result back to the LLM until the task is complete or
+           the max iteration limit is reached.
+
         Args:
-            task: The task description for the agent to complete
-            
+            task (str): The task description for the agent to complete.
+
         Returns:
-            Dictionary with results and execution summary
+            A dictionary containing the results and a summary of the execution.
         """
         logger.info(f"Starting agent run with task: {task}")
         logger.info("="*80)
@@ -89,7 +114,7 @@ class ReactAgent:
                     break
                 
             except Exception as e:
-                logger.error(f"Error in iteration {self.iteration_count}: {str(e)}")
+                logger.error(f"Error in iteration {self.iteration_count}: {str(e)}", exc_info=True)
                 self.conversation_history.append({
                     "role": "user",
                     "content": f"Error occurred: {str(e)}. Please try a different approach."
@@ -112,7 +137,15 @@ class ReactAgent:
         return result
     
     def _build_system_prompt(self) -> str:
-        """Build the system prompt with tool descriptions."""
+        """
+        Builds the system prompt with tool descriptions and instructions.
+
+        This prompt is sent to the LLM at the beginning of the conversation to
+        provide context, instructions on how to behave, and a list of available tools.
+
+        Returns:
+            The complete system prompt string.
+        """
         all_tools = get_available_tools()
         if self.mcp_tools:
             all_tools.extend(self.mcp_tools)
@@ -169,13 +202,13 @@ Then you continue with your next THOUGHT/ACTION cycle.
     
     def _call_llm(self, system_prompt: str) -> str:
         """
-        Call the configured LLM with the current conversation history.
-        
+        Calls the configured LLM with the current conversation history.
+
         Args:
-            system_prompt: The system prompt with instructions
-            
+            system_prompt (str): The system prompt with instructions.
+
         Returns:
-            The LLM's response text
+            The LLM's response text.
         """
         response_text = self.llm_client.call_llm(system_prompt, self.conversation_history)
         
@@ -189,16 +222,17 @@ Then you continue with your next THOUGHT/ACTION cycle.
     
     def _parse_response(self, response: str) -> Optional[Dict[str, Any]]:
         """
-        Parse the LLM's XML response.
+        Parses the LLM's XML response to extract thought, tool name, and parameters.
 
         Args:
-            response: The XML response from the LLM.
+            response (str): The XML response from the LLM.
 
         Returns:
-            A dictionary containing the parsed data or None if parsing fails.
+            A dictionary containing the parsed data ('thought', 'tool_name', 'parameters'),
+            or None if parsing fails.
         """
         try:
-            # Wrap the response in a root element to handle fragmented XML
+            # Wrap the response in a root element to handle fragmented or incomplete XML
             xml_response = f"<root>{response}</root>"
             root = ET.fromstring(xml_response)
 
@@ -206,6 +240,9 @@ Then you continue with your next THOUGHT/ACTION cycle.
             thought = thought_element.text.strip() if thought_element is not None and thought_element.text else ""
 
             action_element = root.find("ACTION")
+            if action_element is None:
+                raise ValueError("ACTION block not found in response")
+
             tool_name_element = action_element.find("tool_name")
             tool_name = tool_name_element.text.strip() if tool_name_element is not None and tool_name_element.text else ""
 
@@ -232,13 +269,16 @@ Then you continue with your next THOUGHT/ACTION cycle.
 
     def _process_response(self, response: str) -> Optional[Dict[str, Any]]:
         """
-        Parse the LLM response and execute the requested tool.
-        
+        Parses the LLM response and executes the requested tool.
+
+        This method acts as the bridge between the LLM's output and the agent's
+        tool execution logic. It also handles logging and updating the conversation history.
+
         Args:
-            response: The LLM's response text
-            
+            response (str): The LLM's response text.
+
         Returns:
-            Dictionary with tool execution results or None if no tool was called
+            A dictionary with tool execution results or None if no tool was called.
         """
         try:
             # Parse the response to extract action and parameters
@@ -273,21 +313,23 @@ Then you continue with your next THOUGHT/ACTION cycle.
             }
             
         except Exception as e:
-            logger.error(f"Error processing response: {str(e)}")
+            logger.error(f"Error processing response: {str(e)}", exc_info=True)
             return None
     
     def _execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute a tool with the given parameters.
-        
+        Executes a tool with the given parameters.
+
+        It can execute local tools from CodeRepositoryTools or remote tools via McpTools.
+
         Args:
-            tool_name: Name of the tool to execute
-            parameters: Parameters for the tool
-            
+            tool_name (str): The name of the tool to execute.
+            parameters (Dict[str, Any]): A dictionary of parameters for the tool.
+
         Returns:
-            Tool execution result
+            A dictionary containing the tool's execution result.
         """
-        # Handle task_complete specially
+        # Handle the special 'task_complete' tool
         if tool_name == "task_complete":
             return {
                 "success": True,
@@ -299,7 +341,7 @@ Then you continue with your next THOUGHT/ACTION cycle.
         if self.mcp_tools_client and tool_name in mcp_tool_names:
             return self.mcp_tools_client.execute_mcp_tool(tool_name, parameters)
 
-        # Get the tool method
+        # Execute a local tool
         if not hasattr(self.tools, tool_name):
             return {
                 "success": False,
