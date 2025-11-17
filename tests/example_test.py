@@ -5,7 +5,7 @@ This tests the tool execution and agent structure.
 """
 
 import logging
-from tools import CodeRepositoryTools, get_available_tools
+from src.tools import CodeRepositoryTools, get_available_tools
 
 # Set up logging
 logging.basicConfig(
@@ -111,7 +111,7 @@ def test_agent_structure():
     
     # Test imports
     try:
-        from agent import ReactAgent
+        from src.agent import ReactAgent
         logger.info("✓ Agent module imported successfully")
     except ImportError as e:
         logger.error(f"✗ Failed to import agent module: {e}")
