@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Any, List, Optional
 from llm import LlmClient
 from tools import CodeRepositoryTools, get_available_tools
+from mcp_tools import McpTools
 
 import time
 
@@ -21,7 +22,7 @@ class ReactAgent:
     complete software development tasks.
     """
     
-    def __init__(self, llm_client: LlmClient, repo_path: str = ".", max_iterations: int = 10):
+    def __init__(self, llm_client: LlmClient, repo_path: str = ".", max_iterations: int = 10, mcp_server_url: Optional[str] = None):
         """
         Initialize the React agent.
         
@@ -36,9 +37,15 @@ class ReactAgent:
         self.iteration_count = 0
         self.conversation_history = []
         self.is_complete = False
-        
+        self.mcp_tools_client = None
+        self.mcp_tools = []
+
+        if mcp_server_url:
+            self.mcp_tools_client = McpTools(mcp_server_url)
+            self.mcp_tools = self.mcp_tools_client.get_mcp_tools()
+
         logger.info(f"Initialized ReactAgent with repo_path: {repo_path}, max_iterations: {max_iterations}")
-    
+
     def run(self, task: str) -> Dict[str, Any]:
         """
         Run the agent on a given task.
@@ -106,13 +113,17 @@ class ReactAgent:
     
     def _build_system_prompt(self) -> str:
         """Build the system prompt with tool descriptions."""
+        all_tools = get_available_tools()
+        if self.mcp_tools:
+            all_tools.extend(self.mcp_tools)
+
         tools_description = "\n\n".join([
             f"<tool>\n"
             f"  <name>{tool['name']}</name>\n"
             f"  <description>{tool['description']}</description>\n"
             f"  <parameters>{json.dumps(tool['parameters'], indent=2)}</parameters>\n"
             f"</tool>"
-            for tool in get_available_tools()
+            for tool in all_tools
         ])
         
         prompt = f"""You are a software development agent that can interact with a code repository.
@@ -282,16 +293,21 @@ Then you continue with your next THOUGHT/ACTION cycle.
                 "success": True,
                 "summary": parameters.get("summary", "Task completed")
             }
-        
+
+        # Check if the tool is from the MCP server
+        mcp_tool_names = [tool['name'] for tool in self.mcp_tools]
+        if self.mcp_tools_client and tool_name in mcp_tool_names:
+            return self.mcp_tools_client.execute_mcp_tool(tool_name, parameters)
+
         # Get the tool method
         if not hasattr(self.tools, tool_name):
             return {
                 "success": False,
                 "error": f"Unknown tool: {tool_name}"
             }
-        
+
         tool_method = getattr(self.tools, tool_name)
-        
+
         try:
             result = tool_method(**parameters)
             return result
