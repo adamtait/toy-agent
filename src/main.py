@@ -8,8 +8,8 @@ import sys
 import logging
 import argparse
 from dotenv import load_dotenv
-from agent import ReactAgent
-from llm import ClaudeLlmClient, GeminiLlmClient
+from .agent import ReactAgent
+from .llm import ClaudeLlmClient, GeminiLlmClient
 
 
 def setup_logging(log_level: str = "INFO", log_file: str = None):

@@ -22,11 +22,11 @@ $(VENV_DIR)/bin/activate:
 
 # Run tests
 test: install
-	. $(VENV_DIR)/bin/activate && pytest
+	. $(VENV_DIR)/bin/activate && PYTHONPATH=. pytest tests/
 
 # Build a binary
 build: install
-	. $(VENV_DIR)/bin/activate && pyinstaller --onefile --name react-agent main.py
+	. $(VENV_DIR)/bin/activate && pyinstaller --onefile --name react-agent src/main.py
 
 # Clean up build artifacts and cache
 clean:
