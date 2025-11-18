@@ -4,11 +4,11 @@
 
 ### 1.1 Purpose
 
-This document provides a detailed specification for the Toy Agent, a ReAct-based autonomous agent for software development. It is intended to be a comprehensive guide for both language models and human developers, enabling them to understand, reproduce, and extend the system.
+This document provides a detailed, implementation-agnostic specification for the Toy Agent, a ReAct-based autonomous agent for software development. It is intended to be a comprehensive guide for both language models and human developers, enabling them to understand, reproduce, and extend the system.
 
 ### 1.2 Scope
 
-This specification covers the architecture, functionality, and operational environment of the Toy Agent as of the current version in the repository. It details all existing features and behaviors, without making assumptions about future enhancements.
+This specification covers the architecture, functionality, and operational environment of the Toy Agent. It details all existing features and behaviors, without making assumptions about future enhancements or specific implementation choices.
 
 ### 1.3 Definitions and Acronyms
 
@@ -24,7 +24,7 @@ This specification covers the architecture, functionality, and operational envir
 
 ### 2.1 Product Perspective
 
-The Toy Agent is a standalone Python application that operates on a local code repository. It is designed to be invoked from the command line, with a specific task provided by the user. The agent then operates autonomously to complete the task.
+The Toy Agent is a standalone application that operates on a local code repository. It is designed to be invoked from the command line, with a specific task provided by the user. The agent then operates autonomously to complete the task.
 
 ### 2.2 Product Functions
 
@@ -43,7 +43,7 @@ The primary users of this system are:
 
 ### 2.4 Constraints
 
-- The agent is implemented in Python 3.7+ and relies on the dependencies listed in `requirements.txt`.
+- The agent must be implementable in a modern, high-level programming language (e.g., Python 3.7+).
 - The agent's performance is dependent on the capabilities of the configured LLM.
 - The agent operates on the local filesystem and requires appropriate read/write permissions.
 - The agent's context is limited by the LLM's context window.
@@ -59,123 +59,117 @@ The system is built on the ReAct (Reasoning + Acting) pattern. This pattern invo
 
 ### 3.2 Component Breakdown
 
-The system is composed of the following key components:
-- **`main.py`**: The command-line entry point.
-- **`agent.py`**: The core `ReactAgent` class and its logic.
-- **`tools.py`**: The `CodeRepositoryTools` class and its methods.
-- **`llm.py`**: The LLM client for communicating with the LLM API.
+The system is composed of the following logical components:
+- **Command-Line Entry Point**: The user-facing interface for starting and configuring the agent.
+- **Agent Core**: The central component that orchestrates the ReAct loop.
+- **LLM Subsystem**: The component responsible for all communication with the LLM.
+- **Local Tooling Subsystem**: The component that provides the agent with the ability to interact with the local filesystem.
+- **Remote Tooling Subsystem**: The component that provides the agent with the ability to interact with remote tools via MCP.
 
-## 4. Functional Requirements
+## 4. Component Specifications
 
-### 4.1. `main.py`
+### 4.1. Command-Line Entry Point
 
-- **4.1.1. Command-Line Argument Parsing**: The script must parse the following command-line arguments:
-    - `--task` (string, required): The task for the agent to complete.
-    - `--repo` (string, optional, default="."): The path to the code repository.
-    - `--max-iterations` (integer, optional, default=10): The maximum number of reasoning-action cycles.
-    - `--llm-provider` (string, optional, choices=["claude", "gemini"], default="claude"): The LLM provider to use.
-    - `--log-level` (string, optional, choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO"): The logging level.
-    - `--log-file` (string, optional, default=None): The file to write logs to.
-    - `--mcp-server` (string, optional, default=None): The URL of an MCP server to load remote tools from.
-- **4.1.2. Logging Setup**: The script must configure logging based on the `--log-level` and `--log-file` arguments.
-- **4.1.3. Environment Variable Loading**: The script must load environment variables from a `.env` file.
-- **4.1.4. LLM Client Initialization**: The script must initialize the correct LLM client (`ClaudeLlmClient` or `GeminiLlmClient`) based on the `--llm-provider` argument. It must also retrieve the appropriate API key from the environment variables (`ANTHROPIC_API_KEY` or `GEMINI_API_KEY`).
-- **4.1.5. Agent Initialization and Execution**: The script must initialize the `ReactAgent` with the parsed arguments and the LLM client, and then call the `run` method with the task.
-- **4.1.6. Result Handling**: The script must print the final result of the agent's run, including success status, iterations used, and conversation length.
+- **Description**: This component is responsible for parsing user input, configuring the agent, and initiating a run.
+- **Inputs**:
+    - A required "task" string.
+    - An optional "repository path" string.
+    - An optional "max iterations" integer.
+    - An optional "LLM provider" string.
+    - An optional "log level" string.
+    - An optional "log file" string.
+    - An optional "MCP server URL" string.
+- **Pre-conditions**:
+    - The user has provided a valid task.
+- **Post-conditions**:
+    - The Agent Core is initialized with the correct configuration.
+    - The agent's main execution loop is started.
+    - The final result of the agent's run is reported to the user.
+- **Behaviors**:
+    - It must parse all documented command-line arguments.
+    - It must configure the system's logging based on the user's input.
+    - It must load any required environment variables (e.g., API keys).
+    - It must instantiate the appropriate LLM client based on the user's selection.
 
-### 4.2. `agent.py` - `ReactAgent`
+### 4.2. Agent Core
 
-- **4.2.1. Initialization**: The `ReactAgent` class must be initialized with an LLM client, a repository path, a maximum number of iterations, and an optional MCP server URL.
-- **4.2.2. `run` Method**: The `run` method must:
-    - Initialize the conversation history with a system prompt and the user's task.
-    - Loop until the task is complete or the maximum number of iterations is reached.
-    - In each iteration, call the LLM, process the response, execute the chosen tool, and append the observation to the conversation history.
-    - Return a dictionary with the final result.
-- **4.2.3. `_build_system_prompt` Method**: This method must construct a system prompt that includes:
-    - An introductory paragraph explaining the agent's purpose and the ReAct pattern.
-    - A section titled "Available Tools:", under which each available tool (local and MCP) is listed.
-    - Each tool's description must be formatted within `<tool>` tags, containing `<name>`, `<description>`, and `<parameters>` sub-tags. The parameters must be a JSON string.
-    - A section with instructions on how the LLM must format its response, including the use of `<THOUGHT>` and `<ACTION>` XML tags, and a concrete example of a valid response.
-- **4.2.4. `_call_llm` Method**: This method must call the LLM client with the system prompt and the current conversation history, and then append the LLM's response to the history.
-- **4.2.5. `_parse_response` Method**: This method must parse the LLM's XML response to extract the thought, tool name, and parameters. To handle potentially malformed or incomplete XML from the LLM, the response string must be wrapped in a root element (e.g., `<root>...response...</root>`) before parsing. If parsing fails for any reason (e.g., `ET.ParseError`, missing required tags), the method must log the error and return `None`.
-- **4.2.6. `_process_response` Method**: This method must orchestrate the parsing of the LLM's response and the execution of the chosen tool.
-- **4.2.7. `_execute_tool` Method**: This method must:
-    - Handle the `task_complete` tool separately.
-    - Check if the tool is an MCP tool and execute it if so.
-    - Otherwise, execute the tool from the `CodeRepositoryTools` class.
+- **Description**: This component is the heart of the agent, responsible for managing the ReAct loop and the conversation with the LLM.
+- **Inputs**:
+    - An LLM client.
+    - A repository path.
+    - A maximum number of iterations.
+    - An optional MCP server URL.
+- **Pre-conditions**:
+    - The component is initialized with a valid configuration.
+- **Post-conditions**:
+    - The task is completed successfully, or the agent stops after reaching the maximum number of iterations.
+- **Behaviors**:
+    - It must manage the conversation history with the LLM.
+    - It must construct a system prompt that explains the ReAct pattern and lists the available tools.
+    - It must repeatedly call the LLM Subsystem to get the next action.
+    - It must parse the LLM's response to identify the chosen tool and its parameters.
+    - It must delegate the execution of the chosen tool to the appropriate Tooling Subsystem.
+    - It must feed the result of the tool's execution back to the LLM as an "observation."
 
-### 4.3. `tools.py` - `CodeRepositoryTools`
+### 4.3. LLM Subsystem
 
-- **4.3.1. `list_files` Method**: This method must recursively list all files in a given directory, excluding hidden files and common ignore patterns.
-- **4.3.2. `read_file` Method**: This method must read the entire content of a file.
-- **4.3.3. `write_file` Method**: This method must write content to a file, creating it if it doesn't exist and overwriting it if it does.
-- **4.3.4. `search_in_files` Method**: This method must search for a pattern in files. It must first attempt to use the system's `grep` command on non-Windows platforms for efficiency. The determination of the platform must be done via `platform.system()`. If the `grep` command fails (e.g., `subprocess.SubprocessError` or `FileNotFoundError`) or if the platform is Windows, it must fall back to a manual, line-by-line search through the files in Python. The search should be case-insensitive and recursive.
-- **4.3.5. `get_file_info` Method**: This method must retrieve metadata about a file, such as its size and type.
-- **4.3.6. `get_available_tools` Function**: This function must return a list of dictionaries, each describing a tool with its name, description, and parameters.
+- **Description**: This component provides a standardized interface for communicating with different LLMs.
+- **Inputs**:
+    - A system prompt.
+    - The current conversation history.
+- **Pre-conditions**:
+    - The subsystem is initialized with a valid API key.
+- **Post-conditions**:
+    - The LLM's response is returned to the Agent Core.
+- **Behaviors**:
+    - It must provide a common interface for different LLM providers (e.g., Anthropic Claude, Google Gemini).
+    - It must handle the specifics of making API calls to the selected LLM.
+    - It must include error handling for API failures.
 
-### 4.4. `llm.py`
+### 4.4. Local Tooling Subsystem
 
-- **4.4.1. `LlmClient` Abstract Base Class**: This class must define the interface for LLM clients, with an abstract `call_llm` method.
-- **4.4.2. `ClaudeLlmClient` Class**: This class must implement the `LlmClient` interface for the Anthropic Claude API.
-- **4.4.3. `GeminiLlmClient` Class**: This class must implement the `LlmClient` interface for the Google Gemini API.
-- **4.4.4. API Error Handling**: All `LlmClient` implementations must include error handling for API calls. If an API request fails, the client should catch the exception, log a descriptive error message, and raise the exception or handle it in a way that prevents the agent from crashing.
+- **Description**: This component provides the agent with a set of tools for interacting with the local filesystem.
+- **Inputs**:
+    - A tool name and a set of parameters.
+- **Pre-conditions**:
+    - The tool name is valid and the parameters are correct.
+- **Post-conditions**:
+    - The tool's action is performed on the filesystem.
+    - The result of the action is returned to the Agent Core.
+- **Behaviors**:
+    - It must provide the following tools:
+        - `list_files`: Recursively lists all files in a directory.
+        - `read_file`: Reads the content of a file.
+        - `write_file`: Writes content to a file.
+        - `search_in_files`: Searches for a pattern in files.
+        - `get_file_info`: Retrieves metadata about a file.
+        - `task_complete`: Signals that the task is finished.
+    - It must provide a mechanism for the Agent Core to discover the available tools and their schemas.
 
-### 4.5. `mcp_tools.py` - `McpTools`
+### 4.5. Remote Tooling Subsystem
 
-- **4.5.1. Initialization**: The `McpTools` class must be initialized with the URL of an MCP server.
-- **4.5.2. `get_mcp_tools` Method**: This method must fetch the list of available tools from the MCP server.
-- **4.5.3. `execute_mcp_tool` Method**: This method must execute a tool on the MCP server.
+- **Description**: This component provides the agent with the ability to discover and execute tools from a remote MCP server.
+- **Inputs**:
+    - The URL of an MCP server.
+- **Pre-conditions**:
+    - The MCP server is available and responsive.
+- **Post-conditions**:
+    - The list of remote tools is available to the Agent Core.
+    - Remote tools can be executed and their results returned to the Agent Core.
+- **Behaviors**:
+    - It must be able to fetch a list of available tools from the MCP server.
+    - It must be able to execute a tool on the MCP server with a given set of parameters.
 
-## 5. External Interface Requirements
+## 5. Non-Functional Requirements
 
-### 5.1 Command-Line Interface (CLI)
-
-The agent is invoked with the following command-line arguments:
-- `--task`: The task for the agent to complete.
-- `--repo`: The path to the code repository.
-- `--max-iterations`: The maximum number of reasoning-action cycles.
-- `--llm-provider`: The LLM provider to use.
-- `--log-level`: The logging level.
-- `--log-file`: The file to write logs to.
-- `--mcp-server`: The URL of an MCP server to load remote tools from.
-
-### 5.2 LLM API
-
-The agent interacts with an LLM via a REST API. The specific endpoint and authentication details are configured via environment variables.
-
-## 6. Non-Functional Requirements
-
-### 6.1 Performance
+### 5.1 Performance
 
 The agent's performance is primarily determined by the response time of the LLM API. Local file operations are expected to be fast.
 
-### 6.2 Security
+### 5.2 Security
 
 The agent operates with the same permissions as the user who invokes it. It does not implement any additional security measures.
 
-### 6.3 Observability
+### 5.3 Observability
 
 The agent provides detailed logging of its operations, including all interactions with the LLM and the local filesystem.
-
-## 7. Logging Specification
-
-### 7.1 Agent State Logging
-
-- Iteration counts
-- Conversation history length
-- Completion status
-- Max iterations warnings
-
-### 7.2 LLM Interaction Logging
-
-- System prompt
-- Full conversation history
-- LLM request parameters
-- Complete LLM responses
-
-### 7.3 Tool Execution Logging
-
-- Tool name and parameters
-- Execution results (success/failure)
-- File operations (paths, sizes, counts)
-- Error messages with stack traces
